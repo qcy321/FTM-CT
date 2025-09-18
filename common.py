@@ -74,7 +74,7 @@ class CheckpointType(Enum):
     FINAL = "checkpoint-final"
 
 
-# 数据集路径和文件映射
+# Dataset path and file mapping
 DATA_CONFIG: Dict[str, Tuple[str, List[str]]] = {
     "CSN": ("./dataset/CSN",
             ["codebase.jsonl", "train.jsonl", "test.jsonl", "valid.jsonl"]),
@@ -87,7 +87,7 @@ DATA_CONFIG: Dict[str, Tuple[str, List[str]]] = {
             ["codebase.jsonl", "train.jsonl", "test.jsonl", "valid.jsonl"])
 }
 
-# 文件类型到索引的映射
+# Mapping of file types to indexes
 FILE_TYPE_MAPPING = {
     "codebase_file": 0,
     "train_data_file": 1,

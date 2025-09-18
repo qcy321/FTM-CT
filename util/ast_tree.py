@@ -4,8 +4,8 @@ from abc import ABC, abstractmethod
 
 def generate_func(node: ast.FunctionDef):
     """
-    生成函数信息对象
-    :param node: ast的函数节点信息
+    Generate function information object
+    :param node: AST function node information
     :return:
     """
     return FunctionNode(node)
@@ -13,8 +13,8 @@ def generate_func(node: ast.FunctionDef):
 
 def generate_class(node: ast.ClassDef):
     """
-    生成类信息对象
-    :param node: ast的类节点信息
+    Generate class information object
+    :param node: AST class node information
     :return:
     """
     body = ClassNode(node)
@@ -28,7 +28,7 @@ def generate_class(node: ast.ClassDef):
 
 class CommentRemover(ast.NodeTransformer):
     def visit_FunctionDef(self, node):
-        # 过滤掉函数体中所有的 Expr 节点，如果它们是 Str 类型（即多行注释或 docstring）
+        # Remove all Expr nodes from the function body if they are Str type (i.e., multi-line comments or docstrings)
         node.body = [
             n for n in node.body
             if not (isinstance(n, ast.Expr) and isinstance(n.value, ast.Str))
@@ -38,7 +38,7 @@ class CommentRemover(ast.NodeTransformer):
 
 class FunctionNode:
     """
-    函数信息保存对象
+    Function information storage object
     """
 
     def __init__(self, node) -> None:
@@ -53,7 +53,7 @@ class FunctionNode:
 
 class ClassNode:
     """
-    类信息保存对象
+    Class information storage object
     """
 
     def __init__(self, node) -> None:
@@ -65,7 +65,7 @@ class ClassNode:
 
 class FileNode:
     """
-    py文件信息保存对象
+    Python file information storage object
     """
 
     def __init__(self, name):
@@ -77,16 +77,16 @@ class FileNode:
 
 class ExtractNode(ABC):
     """
-    从解析的对象中提取函数信息，通过重写_extract_func_node来执行想要的操作
+    Extract function information from parsed objects by overriding _extract_func_node to perform desired operations
     """
 
     @abstractmethod
     def _extract_func_node(self, class_name: str, functions: list[FunctionNode], obj: any):
         """
-        需要自己实现相关逻辑
-        :param class_name: 类名，即functions中保存函数信息所属的类名
-        :param functions: 函数信息，保存某个类中所有的函数信息
-        :param obj: 用于保存数据的对象
+        Needs to implement related logic
+        :param class_name: Class name, i.e., the class to which the functions belong
+        :param functions: Function information, storing all function information within a class
+        :param obj: Object used to store data
         :return:
         """
         pass
@@ -108,21 +108,21 @@ class ExtractNode(ABC):
 
 class Visitor(ast.NodeVisitor):
     """
-    继承ast.NodeVisitor，自动解析不同类型的节点，从而实现不同的操作，
-    这里是对自己想实现功能的包装，不对外开放。
+    Inherit from ast.NodeVisitor to automatically parse different types of nodes and implement different operations,
+    This is a wrapper for the desired functionality and is not exposed externally.
     """
 
     def __init__(self, name):
         self.file = FileNode(name)
 
     def visit_Expr(self, node):
-        # 确保节点有值，并且是字符串类型
+        # Ensure the node has a value and is of string type
         if isinstance(node.value, ast.Str):
-            # 提取文档字符串
+            # Extract docstring
             self.file.docstring = node.value.s
 
     def visit_ClassDef(self, node):
-        # 解析内部类
+        # Parse inner classes
         self.file.classes.append(generate_class(node))
 
     def visit_FunctionDef(self, node):
@@ -131,7 +131,7 @@ class Visitor(ast.NodeVisitor):
 
 def parse_code(code_str, file_name) -> FileNode:
     """
-    解析py文件，从中提取函数信息
+    Parse a Python file and extract function information
     :param code_str:
     :param file_name:
     :return:
@@ -147,7 +147,7 @@ def parse_code(code_str, file_name) -> FileNode:
 
 def parse_func_code(code_str) -> FunctionNode:
     """
-    只解析函数
+    Parse only the function
     :param code_str:
     :return:
     """

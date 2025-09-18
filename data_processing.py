@@ -56,7 +56,7 @@ def remove_comments_and_docstrings(source):
 
 def single_process(df: pd.DataFrame) -> pd.DataFrame:
     if "code" not in df.columns:
-        # 修改单个列名
+        # Modify a single column name
         df.rename(columns={'function': 'code', 'function_tokens': 'code_tokens'}, inplace=True)
     return df
 

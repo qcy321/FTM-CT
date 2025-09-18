@@ -29,11 +29,11 @@ class StrategyRegistry:
     def get_strategy(cls, strategy_name, manager, cache):
         strategy_class = cls._strategies.get(strategy_name)
         if strategy_class is None:
-            raise ValueError(f"未知的微调策略: {strategy_name}")
+            raise ValueError(f"Unknown fine-tuning strategy: {strategy_name}")
         return strategy_class(manager, cache)
 
 
-# 具体策略实现（使用注册器自动注入）
+# Specific strategy implementation (using the registrar to automatically inject)
 @StrategyRegistry.register(FinetuneStrategy.CROSS.value)
 class CrossStrategy(Strategy):
     def set_interval(self, epoch):

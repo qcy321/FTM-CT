@@ -13,14 +13,14 @@ from typing import Optional, Any, Dict, Callable
 import torch.nn.functional as F
 
 
-# 定义枚举类用于模型类型和隐藏状态方法
+# Define enumeration classes for model types and hidden state methods
 class HiddenStateMethod(Enum):
     AVG = "avg"
     CLS = "cls"
     LAST = "last"
 
 
-# 自定义异常类
+# Custom exception class
 class ModelSelectionError(ValueError):
     """Raised when an invalid model class or hidden state method is specified"""
 
@@ -29,16 +29,16 @@ class ModelSelectionError(ValueError):
 
 
 def normalize_output(outputs: torch.Tensor, p: float = 2.0, dim: int = 1) -> torch.Tensor:
-    """规范化张量输出"""
+    """Normalize tensor output"""
     return F.normalize(outputs, p=p, dim=dim)
 
 
-# 模型选择工厂
+# Model Selection Factory
 MODEL_REGISTRY: Dict[str, Callable] = {}
 
 
 def register_model(model_type: str):
-    """装饰器，用于注册模型类"""
+    """Decorator, used to register model classes"""
 
     def decorator(cls):
         MODEL_REGISTRY[model_type] = cls
@@ -49,22 +49,22 @@ def register_model(model_type: str):
 
 def select_model(encoder: Any, args: Any) -> nn.Module:
     """
-    根据参数选择并构造模型，使用工厂模式。
+    Select and construct models based on parameters, using the factory pattern.
 
     Args:
-        encoder: 预训练模型编码器
-        args: 参数对象，包含 model_class 和 hidden_state_method 属性
+        encoder: Pre-trained model encoder
+        args: Parameter object, containing model_class and hidden_state_method attributes
 
     Returns:
-        nn.Module: 构造的模型实例
+        nn.Module: Constructed model instance
 
     Raises:
-        ModelSelectionError: 如果 model_class 或 hidden_state_method 无效
+        ModelSelectionError: If model_class or hidden_state_method is invalid
     """
     model_class = getattr(args, "model_class", "default")
     hidden_state_method = getattr(args, "hidden_state_method", None)
 
-    # 根据 model_class 或 hidden_state_method 确定模型类型
+    # Determine the model type based on model_class or hidden_state_method
     if model_class == "graph":
         model_type = "graph"
     elif hidden_state_method == HiddenStateMethod.AVG.value:
@@ -79,20 +79,20 @@ def select_model(encoder: Any, args: Any) -> nn.Module:
             f"Supported types: {list(MODEL_REGISTRY.keys())}"
         )
 
-    # 使用工厂模式选择模型
+    # Use factory mode to select model
     model_cls = MODEL_REGISTRY.get(model_type)
     if model_cls is None:
         raise ModelSelectionError(
             f"No model registered for type '{model_type}'. Available types: {list(MODEL_REGISTRY.keys())}")
 
-    # 实例化模型
+    # Instantiate the model
     model = model_cls(encoder)
     return AllModel(model, args)
 
 
 @register_model("graph")
 class GraphModel(nn.Module):
-    """基于图结构的模型"""
+    """Model based on graph structure"""
 
     def __init__(self, encoder: Any):
         super().__init__()
@@ -121,7 +121,7 @@ class GraphModel(nn.Module):
 
 @register_model(HiddenStateMethod.AVG.value)
 class LastAvgModel(nn.Module):
-    """使用最后一层平均池化的模型"""
+    """Model using the last layer of average pooling"""
 
     def __init__(self, encoder: Any):
         super().__init__()
@@ -129,7 +129,7 @@ class LastAvgModel(nn.Module):
         self.config = encoder.config
 
     def _compute_avg_pooling(self, outputs: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-        """计算平均池化"""
+        """Calculate average pooling"""
         return (outputs * mask[:, :, None]).sum(1) / mask.sum(-1)[:, None]
 
     def forward(self,
@@ -147,7 +147,7 @@ class LastAvgModel(nn.Module):
 
 @register_model(HiddenStateMethod.CLS.value)
 class BaseModel(nn.Module):
-    """使用CLS标记输出的基础模型"""
+    """Base model using CLS markup output"""
 
     def __init__(self, encoder: Any):
         super().__init__()
@@ -167,7 +167,7 @@ class BaseModel(nn.Module):
 
 @register_model(HiddenStateMethod.LAST.value)
 class LastModel(nn.Module):
-    """使用CLS标记输出的基础模型"""
+    """Base model using CLS markup output"""
 
     def __init__(self, encoder: Any):
         super().__init__()
@@ -194,7 +194,7 @@ class LastModel(nn.Module):
 
 
 class AllModel(nn.Module):
-    """对模型输出进行后处理的封装类"""
+    """Encapsulation class for post-processing model output"""
 
     def __init__(self, model: nn.Module, args: Any):
         super().__init__()
@@ -214,5 +214,5 @@ class AllModel(nn.Module):
         # return outputs
 
     def save_pretrained(self, path: str) -> None:
-        """保存预训练模型"""
+        """Save pre-trained model"""
         self.model.encoder.save_pretrained(path)

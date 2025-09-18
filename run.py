@@ -27,14 +27,13 @@ from transformers import (AutoModel, AutoTokenizer, RobertaTokenizer, T5Model,
 from peft import LoraConfig, get_peft_model, TaskType
 
 # import transformers
-# 强制启用离线模式
 # transformers.utils.hub.HF_OFFLINE = True
 
 logger = logging.getLogger(__name__)
 
 
 class ModelManager:
-    """管理模型加载、保存和设备设置"""
+    """Manage model loading, saving, and device settings"""
 
     def __init__(self, model_name_or_path: str, model_class: str, device: torch.device):
         self.model_name_or_path = model_name_or_path
@@ -43,26 +42,26 @@ class ModelManager:
         self.model = None
 
     def load_model(self, checkpoint_path: str = None, strict: bool = False) -> None:
-        """加载模型，并将其移动到指定设备"""
+        """Load the model and move it to the specified device"""
         logger.info(f"Loading model from {self.model_name_or_path if checkpoint_path is None else checkpoint_path}")
         self.model = AutoModel.from_pretrained(self.model_name_or_path)
 
         if self.model_class in ["QWEN"]:
             # 配置 LoRA
             lora_config = LoraConfig(
-                task_type=TaskType.FEATURE_EXTRACTION,  # 特征提取
-                r=16,  # 秩
-                lora_alpha=32,  # alpha 值
-                target_modules=["q_proj", "k_proj", "v_proj"],  # 微调的模块（根据模型调整）
-                lora_dropout=0.1,  # Dropout 比例
+                task_type=TaskType.FEATURE_EXTRACTION,
+                r=16,  # rank
+                lora_alpha=32,
+                target_modules=["q_proj", "k_proj", "v_proj"],  # Fine-tuned module (adjusted according to the model)
+                lora_dropout=0.1,
             )
 
-            # 应用 LoRA 到模型
+            # Apply LoRA to the model
             self.model = get_peft_model(self.model, lora_config)
 
         if self.model_class in ["T5"]:
             self.model = self.model.encoder
-        self.model = select_model(self.model, args)  # 假设 select_model 是已定义的函数
+        self.model = select_model(self.model, args)  # Assume select_model is a defined function
 
         if checkpoint_path and os.path.exists(checkpoint_path):
             logger.info(f"Loading checkpoint from {checkpoint_path}")
@@ -76,7 +75,7 @@ class ModelManager:
 
 
 def setup_device_and_gpu(args):
-    """设置设备和 GPU 参数"""
+    """Set device and GPU parameters"""
     device = torch.device(f"cuda:{args.device_ids[0]}" if torch.cuda.is_available() else "cpu")
     args.n_gpu = len(args.device_ids)
     args.device = device
@@ -84,7 +83,7 @@ def setup_device_and_gpu(args):
 
 
 def load_training_state(args) -> None:
-    """设置训练状态，包括断点续训信息和最佳 MRR"""
+    """Set training status, including breakpoint resume information and optimal MRR"""
     path = os.path.join(args.output_dir, args.model_name, "parameter")
     idx_file = os.path.join(path, "idx.txt")
     best_file = os.path.join(path, "best.pt")
@@ -116,7 +115,7 @@ def load_training_state(args) -> None:
 
 def evaluate_or_test(args, model_manager: ModelManager, tokenizer: Any, data_file: str,
                      mode: str = "eval", checkpoint_type: CheckpointType = CheckpointType.LAST_MRR) -> Dict:
-    """执行评估或测试"""
+    """Perform evaluation or testing"""
     if not args.do_zero_shot:
         checkpoint_path = os.path.join(args.output_dir, args.model_name, checkpoint_type.value,
                                        SaveModelFileName.STATE_DIC.value)
@@ -124,7 +123,7 @@ def evaluate_or_test(args, model_manager: ModelManager, tokenizer: Any, data_fil
     else:
         logger.info(f"***** zero shot eval *****")
 
-    result = evaluate(args, model_manager.model, tokenizer, data_file)  # 假设 evaluate 是已定义的函数
+    result = evaluate(args, model_manager.model, tokenizer, data_file)
     logger.info(f"***** {mode.capitalize()} results ({checkpoint_type.value}) *****")
     for key in sorted(result.keys()):
         logger.info("  %s = %s", key, str(result[key]))
@@ -132,13 +131,13 @@ def evaluate_or_test(args, model_manager: ModelManager, tokenizer: Any, data_fil
 
 
 def main(args):
-    # 加载 tokenizer
+    # Load the tokenizer
     tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, local_files_only=True)
 
-    # 加载训练状态（断点续训信息、最佳 MRR）
+    # Load training status (breakpoint resume information, best MRR)
     load_training_state(args)
 
-    # 初始化模型管理器
+    # Initialize the model manager
     model_manager = ModelManager(args.model_name_or_path, args.model_class, args.device)
 
     logger.info("Training/evaluation parameters %s", args)
@@ -155,34 +154,34 @@ def main(args):
             logger.info(f"Continuing training from epoch {args.start_idx}")
         model_manager.load_model(checkpoint_path=checkpoint_path, strict=False)
     else:
-        model_manager.load_model()  # 从预训练模型开始
+        model_manager.load_model()  # Start with a pre-trained model
 
     if args.do_zero_shot:
         evaluate_or_test(args, model_manager, tokenizer, args.test_data_file,
                          mode="eval", checkpoint_type=CheckpointType.LAST_MRR)
         return 0
 
-    # 训练
+    # train
     if args.do_train:
         if args.train_mode == "finetune":
-            fine_tuning(args, model_manager.model, tokenizer)  # 假设 train 是已定义的函数
+            fine_tuning(args, model_manager.model, tokenizer)
         elif args.train_mode == "pretrain":
             pre_training(args, model_manager.model, tokenizer)
         else:
             runtime(args, model_manager.model, tokenizer)
 
-    # 评估
+    # Evaluate
     results = {}
 
     if args.do_eval:
         results.update(evaluate_or_test(args, model_manager, tokenizer, args.eval_data_file,
                                         mode="eval", checkpoint_type=CheckpointType.LAST_MRR))
 
-    # 测试（使用最佳模型）
+    # Test (using the best model)
     if args.do_test:
         results.update(evaluate_or_test(args, model_manager, tokenizer, args.test_data_file,
                                         mode="test", checkpoint_type=CheckpointType.BEST_MRR))
-        # 测试（使用最后一个检查点）
+        # Test (using last checkpoint)
         results.update(evaluate_or_test(args, model_manager, tokenizer, args.test_data_file,
                                         mode="test", checkpoint_type=CheckpointType.LAST_MRR))
 
@@ -231,12 +230,12 @@ def rmm_files(args) -> None:
 
 def setup_output_dir(args) -> None:
     """
-    设置输出目录。
+    Set the output directory.
 
     Args:
-        args: 命令行参数对象，必须包含 lang 属性。
+        args: Command line argument object, must include a lang attribute.
     """
-    # 检查 output_dir 是否为空
+    # Check if output_dir is empty
     if not hasattr(args, 'output_dir') or not args.output_dir:
         raise ValueError(
             "The 'output_dir' attribute is missing or empty. Please provide a valid output directory path.")
@@ -258,12 +257,7 @@ def setup_output_dir(args) -> None:
 
 
 def setup_device_ids(args) -> None:
-    """
-    设置设备 ID。
-
-    Args:
-        args: 命令行参数对象，可能包含 device_ids 属性。
-    """
+    """Set the device ID."""
     gpu_count = torch.cuda.device_count()
     logger.info(f"Detected {gpu_count} GPUs")
 
@@ -286,37 +280,33 @@ def setup_device_ids(args) -> None:
 
 
 def setup_data_paths(args) -> None:
-    """
-        设置数据集文件路径。
-        Args:
-            args: 命令行参数对象，必须包含 dataset 和 lang 属性。
-        """
-    # 检查数据集是否支持
+    """Set the dataset file path. """
+    # Check if the dataset supports
     if args.dataset not in DATA_CONFIG:
         raise ValueError(f"Unsupported dataset: {args.dataset}. Supported datasets: {list(DATA_CONFIG.keys())}")
     data_dir, files = DATA_CONFIG[args.dataset]
     if args.train_mode == "pretrain":
         if args.dataset != "CSN":
-            raise "预训练请使用CSN数据集"
+            raise "Please use the CSN dataset for pre-training"
         args.all_lang = ["go", "java", "javascript", "php", "python", "ruby"]
         args.lang = "all"
         for file_type, idx in FILE_TYPE_MAPPING.items():
-            # 为每种文件类型生成列表
+            # Generate a list for each file type
             file_paths = [
                 os.path.join(data_dir, os.path.join(lang, files[idx]))
                 for lang in args.all_lang
             ]
-            # 复数形式表示多语言文件列表
+            # Plural form indicates a multi-language file list
             plural_file_type = file_type + "s"
             setattr(args, plural_file_type, file_paths)
             logger.info(f"Set {plural_file_type}: {file_paths}")
     else:
-        # 检查 lang 是否为空
+        # Check if lang is empty
         if not hasattr(args, 'lang') or not args.lang:
             raise ValueError(
                 "The 'lang' attribute is missing or empty. Please specify a valid language identifier (e.g., 'python', 'java').")
 
-        # 动态设置文件路径
+        # Dynamically set the file path
         for file_type, idx in FILE_TYPE_MAPPING.items():
             file_path = os.path.join(data_dir, os.path.join(args.lang, files[idx]))
             setattr(args, file_type, file_path)
@@ -324,7 +314,7 @@ def setup_data_paths(args) -> None:
 
 
 def setup_strategy(args):
-    # 初始化 KEncoderManager
+    # Initialize KEncoderManager
     strategy = os.path.join(args.output_dir, args.model_name, "parameter", "strategy.pt")
     if os.path.exists(strategy):
         args.strategy = torch.load(strategy, weights_only=False)
@@ -333,7 +323,7 @@ def setup_strategy(args):
         k_manager = KEncoderManager()
         queue = CacheQueue(args.queue_size, args.device, args.fp16)
 
-        # 自动注入策略
+        # Automatic injection strategy
         strategy_name = getattr(args, "finetune_strategy", FinetuneStrategy.NONE.value)
         logger.info(f"Finetune strategy: {strategy_name}")
         args.strategy = StrategyRegistry.get_strategy(strategy_name, k_manager, queue)
@@ -342,46 +332,42 @@ def setup_strategy(args):
 
 def setup_model_class(args):
     try:
-        # 尝试从映射关系中获取对应的 model_class
+        # Try to get the corresponding model_class from the mapping relationship
         args.model_class = MODEL_CLASS_MAPPING[args.model_name_or_path]
         logger.info(f"Model class: {args.model_class}")
     except KeyError:
-        # 若未找到对应的 model_name_or_path，给出错误提示
+        # If the corresponding model_name_or_path is not found, an error message will be given
         print(f"Error: The model name '{args.model_name_or_path}' is not supported.")
-        # 可以根据实际需求选择抛出异常或者进行其他处理
+        # You can choose to throw an exception or perform other processing according to actual needs
         args.model_class = None
     return args
 
 
 def main_with_args(args):
-    """
-    主函数入口，设置参数并启动训练。
+    """Main function entry, set parameters and start training."""
 
-    Args:
-        args: 命令行参数对象。
-    """
-    # 设置数据路径
+    # Set the data path
     setup_data_paths(args)
 
-    # 设置输出目录
+    # Set the output directory
     setup_output_dir(args)
 
-    # 设置设备 ID
+    # Set the device ID
     setup_device_ids(args)
 
-    # 设置模型类型
+    # Set the model type
     setup_model_class(args)
 
     # Setup CUDA, GPU
     setup_device_and_gpu(args)
 
-    # 设置训练策略
+    # Set the training strategy
     setup_strategy(args)
 
-    # Set seed
+    # Set the seed
     set_seed(args.seed)
 
-    # 启动训练进程
+    # Start the training process
     main(args)
 
 
@@ -438,7 +424,7 @@ if __name__ == "__main__":
                         help="Whether to start zero_shot eval.")
 
     parser.add_argument("--code_testing", action='store_true',
-                        help="Code Testing.")
+                        help="Simple test code can run normally.")
     parser.add_argument('--test_data_size', type=int, default=10,
                         help="Size of test data to use for training.")
     parser.add_argument('--cpu_core', type=int, default=16,

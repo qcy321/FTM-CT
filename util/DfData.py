@@ -11,14 +11,14 @@ class Classes(Enum):
 
 class DfData:
     """
-    用于处理数据，承载数据的类
+    Classes used to process and carry data
     """
 
     def __init__(self, df: DataFrame, file: str):
         """
-        初始化
-        :param df: df数据，存储df数据
-        :param file: df数据以某种格式存储在文件中的路径，即文件存储路径
+        initialization
+        :param df: df data, store df data
+        :param file: The path where the df data is stored in a file in a certain format, that is, the file storage path
         """
         self.df = df
         self.file = file

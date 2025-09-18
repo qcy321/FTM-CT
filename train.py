@@ -29,12 +29,12 @@ logger = logging.getLogger(__name__)
 
 
 class TrainingComplete(Exception):
-    """自定义异常，用于跳出训练循环"""
+    """Custom exception used to jump out of the training loop"""
     pass
 
 
 def setup_optimizer_scheduler(args, model, num_training_steps: int):
-    """设置优化器和学习率调度器。"""
+    """Set the optimizer and learning rate scheduler."""
     no_decay = ['bias', 'LayerNorm.weight']
     optimizer_grouped_parameters = [
         {'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
@@ -44,7 +44,7 @@ def setup_optimizer_scheduler(args, model, num_training_steps: int):
     optimizer = optim.AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=1e-8)
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=num_training_steps)
 
-    # 加载保存的优化器和调度器状态
+    # Load the saved optimizer and scheduler state
     last_path = os.path.join(args.output_dir, args.model_name, CheckpointType.LAST_MRR.value)
     try:
         if os.path.exists(os.path.join(last_path, 'optimizer.pt')):
@@ -59,7 +59,7 @@ def setup_optimizer_scheduler(args, model, num_training_steps: int):
 
 def train_epoch(args, model, tokenizer, train_dataloader, optimizer, scheduler, scaler,
                 epoch_idx: int, cur_epoch=None, dup=None) -> Optional[int]:
-    """训练模型一个 epoch。"""
+    """Train the model for one epoch."""
     model.train()
     tr_loss, tr_num = 0, 0
     for step, batch in enumerate(train_dataloader):
@@ -106,7 +106,7 @@ def train_epoch(args, model, tokenizer, train_dataloader, optimizer, scheduler, 
         if args.train_mode == "pretrain":
             args.global_step += 1
             if args.global_step >= args.max_steps:
-                raise TrainingComplete()  # 抛出异常跳出
+                raise TrainingComplete()
 
 
 def pre_training(args, model, tokenizer):
@@ -114,7 +114,7 @@ def pre_training(args, model, tokenizer):
 
     # get optimizer and scheduler
     optimizer, scheduler = setup_optimizer_scheduler(args, model, args.max_steps)
-    scaler = GradScaler(enabled=args.fp16)  # enabled=args.fp16 确保 FP16 只在需要时生效
+    scaler = GradScaler(enabled=args.fp16)  # enabled=args.fp16 ensures FP16 is only enabled when needed
 
     if args.n_gpu > 1:
         model = torch.nn.DataParallel(model, device_ids=args.device_ids)
@@ -186,7 +186,7 @@ def pre_training(args, model, tokenizer):
                 start_index = 0
 
     except TrainingComplete:
-        pass  # 跳到最终保存
+        pass
 
     final_dir = os.path.join(args.root_output_dir, args.model_name, CheckpointType.FINAL.value)
     save_model(model, final_dir, True)
@@ -204,8 +204,8 @@ def fine_tuning(args, model, tokenizer):
     num_training_steps = len(train_dataloader) * args.num_train_epochs
 
     optimizer, scheduler = setup_optimizer_scheduler(args, model, num_training_steps)
-    # 初始化 GradScaler 用于 FP16
-    scaler = GradScaler(enabled=args.fp16)  # enabled=args.fp16 确保 FP16 只在需要时生效
+    # Initialize GradScaler for FP16
+    scaler = GradScaler(enabled=args.fp16)
 
     if args.n_gpu > 1:
         model = torch.nn.DataParallel(model, device_ids=args.device_ids)
@@ -253,8 +253,8 @@ def runtime(args, model, tokenizer):
     num_training_steps = len(train_dataloader) * args.num_train_epochs
 
     optimizer, scheduler = setup_optimizer_scheduler(args, model, num_training_steps)
-    # 初始化 GradScaler 用于 FP16
-    scaler = GradScaler(enabled=args.fp16)  # enabled=args.fp16 确保 FP16 只在需要时生效
+    # Initialize GradScaler for FP16
+    scaler = GradScaler(enabled=args.fp16)
 
     if args.n_gpu > 1:
         model = torch.nn.DataParallel(model, device_ids=args.device_ids)
@@ -316,7 +316,6 @@ def runtime(args, model, tokenizer):
 def evaluate(args, model, tokenizer, data_file):
     """Evaluate model performance and return MRR and Top-K accuracy."""
     nl_dataset = TextDataset(tokenizer, args, data_file)
-    # 由于这里的评估跟数据的顺序有关，不能使用DistributedSampler，来进行分配数据
     nl_dataloader = DataLoader(nl_dataset, sampler=SequentialSampler(nl_dataset),
                                batch_size=args.eval_batch_size * max(1, args.n_gpu), num_workers=4)
 

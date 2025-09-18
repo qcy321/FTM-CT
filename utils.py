@@ -71,7 +71,7 @@ def extract_dataflow(code, parser, lang):
 def contrastive_loss(q, k, args, temperature=0.05):
     batch_size = q.shape[0]
 
-    # 样本相似度
+    # similarity
     sim = torch.einsum('ac,bc->ab', [q, k])
 
     loss = CrossEntropyLoss()(sim / temperature, torch.arange(batch_size, device=args.device))
@@ -83,23 +83,22 @@ def update_momentum_encoder(q_encoder, k_encoder, m=0.999):
         param_k.data = param_k.data * m + param_q.data * (1. - m)
 
 
-# 定义策略枚举类
 class KEncoderManager:
     def __init__(self):
-        self.k_encoder: Optional[Any] = None  # 缓存的模型实例
-        self.in_strategy: bool = False  # 是否处于策略模式
+        self.k_encoder: Optional[Any] = None  # Cached model instances
+        self.in_strategy: bool = False  # Is it in strategy mode?
         self.device = None
-        self.count: int = 0  # 当前时间步（用于increase/decrease策略）
-        self.interval: int = 0  # 间隔（不同策略有不同含义）
+        self.count: int = 0  # Current time step (used for increase/decrease strategy)
+        self.interval: int = 0  # Interval (different strategies have different meanings)
         self.epoch = 0
 
     def reset(self):
-        """重置状态"""
+        """Reset status"""
         self.k_encoder = None
         self.in_strategy = False
 
     def get_encoder(self, args, model) -> Any:
-        """加载并返回缓存模型"""
+        """Load and return the cached model"""
         if args.finetune_checkpoint == "best":
             output_dir = os.path.join(args.output_dir, args.model_name,
                                       CheckpointType.BEST_MRR.value,
@@ -108,21 +107,21 @@ class KEncoderManager:
             output_dir = os.path.join(args.root_output_dir, args.model_name,
                                       CheckpointType.LAST_MRR.value,
                                       SaveModelFileName.STATE_DIC.value)
-        # 初始化 self.k_encoder，避免未定义
+        # Initialize self.k_encoder to avoid undefined
         self.k_encoder = None
         try:
             self.k_encoder = copy.deepcopy(model)
             self.k_encoder.load_state_dict(torch.load(output_dir, map_location=args.device), strict=False)
             self.device = args.device
         except Exception as e:
-            # 输出错误日志
+            # Output error log
             logger.error(
                 f"Failed: {str(e)}. This might be due to the {output_dir} folder not existing.")
 
-            # 获取检查点目录
+            # Get the checkpoint directory
             checkpoint_dir = os.path.join(args.output_dir, args.model_name, CheckpointType.LAST_MRR.value)
 
-            # 删除检查点目录（如果存在）
+            # Delete the checkpoint directory (if it exists)
             if os.path.exists(checkpoint_dir):
                 try:
                     shutil.rmtree(checkpoint_dir)
@@ -130,22 +129,22 @@ class KEncoderManager:
                 except Exception as delete_error:
                     logger.error(f"Failed to delete checkpoint directory {checkpoint_dir}: {str(delete_error)}")
 
-            # 抛出异常，避免返回无效对象
+            # Throw an exception to avoid returning invalid objects
             raise RuntimeError(
                 f"Model loading failed. Please check the checkpoint at {output_dir} and re-run after fixing the issue.")
 
-            # 验证 self.k_encoder 是否有效
+            # Verify that self.k_encoder is valid
         if self.k_encoder is None:
             raise ValueError("k_encoder was not initialized properly.")
 
         return self.k_encoder
 
     def forward(self, model, code_inputs, attention_mask, position_ids) -> Any:
-        """使用当前模型进行推理"""
+        """Use the current model for inference"""
         return model(code_inputs=code_inputs, attention_mask=attention_mask, position_ids=position_ids)
 
     def forward_with_k_encoder(self, code_inputs, attention_mask, position_ids) -> Any:
-        """使用缓存模型进行推理（无梯度）"""
+        """Use cached model for inference (no gradients)"""
         with torch.no_grad():
             if next(self.k_encoder.parameters()).device != self.device:
                 self.k_encoder.to(self.device)
@@ -182,7 +181,7 @@ class CacheQueue:
         self.reset()
 
     def reset(self):
-        # 初始化负样本队列，动态设置 FP16 或 FP32
+        # Initialize the negative sample queue and dynamically set FP16 or FP32
         self.queue = [[]] * self.queue_size
         self.real_size = 0
         self.queue_ptr = 0

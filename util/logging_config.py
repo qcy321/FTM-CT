@@ -2,14 +2,13 @@ import logging
 import threading
 
 
-# 创建自定义格式化器
 class ColoredFormatter(logging.Formatter):
     COLORS = {
-        'DEBUG': '\033[94m',  # 蓝色
-        'INFO': '\033[92m',  # 绿色
-        'WARNING': '\033[93m',  # 黄色
-        'ERROR': '\033[91m',  # 红色
-        'CRITICAL': '\033[91m'  # 红色
+        'DEBUG': '\033[94m',
+        'INFO': '\033[92m',
+        'WARNING': '\033[93m',
+        'ERROR': '\033[91m',
+        'CRITICAL': '\033[91m'
     }
     RESET_COLOR = '\033[0m'
 
@@ -27,11 +26,9 @@ class Log:
         logger = logging.getLogger()
         logger.setLevel(level)
 
-        # 创建控制台处理器
         console_handler = logging.StreamHandler()
         console_handler.setLevel(logging.DEBUG)
 
-        # 创建自定义格式化器并添加到处理器
         formatter = ColoredFormatter(fmt='%(asctime)s - %(levelname)s - %(name)s - %(message)s')
         console_handler.setFormatter(formatter)
         logger.addHandler(console_handler)
