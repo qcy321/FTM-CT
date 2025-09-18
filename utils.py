@@ -101,11 +101,11 @@ class KEncoderManager:
     def get_encoder(self, args, model) -> Any:
         """加载并返回缓存模型"""
         if args.finetune_checkpoint == "best":
-            output_dir = os.path.join(args.output_dir,
+            output_dir = os.path.join(args.output_dir, args.model_name,
                                       CheckpointType.BEST_MRR.value,
                                       SaveModelFileName.STATE_DIC.value)
         else:
-            output_dir = os.path.join(args.root_output_dir,
+            output_dir = os.path.join(args.root_output_dir, args.model_name,
                                       CheckpointType.LAST_MRR.value,
                                       SaveModelFileName.STATE_DIC.value)
         # 初始化 self.k_encoder，避免未定义
@@ -120,7 +120,7 @@ class KEncoderManager:
                 f"Failed: {str(e)}. This might be due to the {output_dir} folder not existing.")
 
             # 获取检查点目录
-            checkpoint_dir = os.path.join(args.output_dir, CheckpointType.LAST_MRR.value)
+            checkpoint_dir = os.path.join(args.output_dir, args.model_name, CheckpointType.LAST_MRR.value)
 
             # 删除检查点目录（如果存在）
             if os.path.exists(checkpoint_dir):
@@ -171,84 +171,6 @@ def process_in_chunks(code_inputs, mask, ids, model, chunk_size=256):
                 results.append(result)
 
         return torch.cat(results, dim=0)
-
-
-# #配合使用strategy_full.py
-# class CacheQueue:
-#     def __init__(self, queue_size, device, fp16=False):
-#         self.device = device
-#         self.fp16 = fp16
-#         self.queue_size = queue_size
-#         self.dtype = torch.float16 if fp16 else torch.float32
-#         self.reset()
-#
-#     def reset(self):
-#         # 初始化负样本队列，动态设置 FP16 或 FP32
-#         self.queue = [[]] * self.queue_size
-#         self.neg_queue = [[]] * self.queue_size
-#         self.real_size = 0
-#         self.queue_ptr = 0
-#
-#     def convert_neg(self, model):
-#         code_inputs, mask, ids = self.get_queue()
-#         outputs = process_in_chunks(code_inputs, mask, ids, model, 3)
-#         self.neg_queue[:self.real_size] = outputs.detach().to(device="cpu",
-#                                                               dtype=self.dtype,
-#                                                               copy=True)
-#
-#     def get_queue(self):
-#         # 返回队列中的有效数据，分别提取 nl_inputs, code_inputs, mask, ids 并堆叠
-#         valid_queue = self.queue[:self.real_size]
-#         if not valid_queue or valid_queue[0] is None:
-#             return None
-#
-#         # 提取每个字段的列表
-#         code_inputs_list = [item[0] for item in valid_queue]
-#         mask_list = [item[1] for item in valid_queue if item[1] is not None]
-#         ids_list = [item[2] for item in valid_queue if item[2] is not None]
-#
-#         # 使用 torch.cat 转换为张量
-#         return (
-#             torch.cat(code_inputs_list, dim=0).to(device=self.device),
-#             torch.cat(mask_list, dim=0).to(device=self.device) if mask_list else None,
-#             torch.cat(ids_list, dim=0).to(device=self.device) if ids_list else None
-#         )
-#
-#     def get_neg_queue(self):
-#         return torch.stack(self.neg_queue[:self.real_size], dim=0).to(device=self.device, dtype=self.dtype)
-#
-#     def update(self, code_inputs, mask, ids, k=None):
-#         batch_size = code_inputs.shape[0]
-#         ptr = self.queue_ptr % self.queue_size
-#
-#         # 将 batch 拆分为单条数据
-#         batch_split = [
-#             (
-#                 code_inputs[i:i + 1].to(device="cpu"),  # 单条 code_inputs
-#                 mask[i:i + 1].to(device="cpu") if mask is not None else None,  # 单条 mask
-#                 ids[i:i + 1].to(device="cpu") if ids is not None else None  # 单条 ids
-#             ) for i in range(batch_size)
-#         ]
-#
-#         if ptr + batch_size <= self.queue_size:
-#             self.queue[ptr:ptr + batch_size] = batch_split
-#         else:
-#             end_size = self.queue_size - ptr
-#             self.queue[ptr:] = batch_split[:end_size]
-#             self.queue[:batch_size - end_size] = batch_split[end_size:]
-#
-#         if k != None:
-#             k_detached = k.detach().to(device="cpu", dtype=self.dtype, copy=True)
-#
-#             if ptr + batch_size <= self.queue_size:
-#                 self.neg_queue[ptr:ptr + batch_size] = k_detached
-#             else:
-#                 end_size = self.queue_size - ptr
-#                 self.neg_queue[ptr:] = k_detached[:end_size]
-#                 self.neg_queue[:batch_size - end_size] = k_detached[end_size:]
-#
-#         self.queue_ptr += batch_size
-#         self.real_size = min(self.queue_size, self.real_size + batch_size)
 
 
 class CacheQueue:

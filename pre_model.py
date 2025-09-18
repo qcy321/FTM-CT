@@ -17,6 +17,7 @@ import torch.nn.functional as F
 class HiddenStateMethod(Enum):
     AVG = "avg"
     CLS = "cls"
+    LAST = "last"
 
 
 # 自定义异常类
@@ -70,6 +71,8 @@ def select_model(encoder: Any, args: Any) -> nn.Module:
         model_type = HiddenStateMethod.AVG.value
     elif hidden_state_method == HiddenStateMethod.CLS.value:
         model_type = HiddenStateMethod.CLS.value
+    elif hidden_state_method == HiddenStateMethod.LAST.value:
+        model_type = HiddenStateMethod.LAST.value
     else:
         raise ModelSelectionError(
             f"Invalid model_class '{model_class}' or hidden_state_method '{hidden_state_method}'. "
@@ -113,7 +116,7 @@ class GraphModel(nn.Module):
                                 attention_mask=attention_mask,
                                 position_ids=position_ids)[1]
         else:
-            return self.encoder(nl_inputs, attention_mask=nl_inputs.ne(1))[1]
+            return self.encoder(nl_inputs, attention_mask=attention_mask)[1]
 
 
 @register_model(HiddenStateMethod.AVG.value)
@@ -135,11 +138,11 @@ class LastAvgModel(nn.Module):
                 attention_mask: Optional[torch.Tensor] = None,
                 position_ids: Optional[torch.Tensor] = None) -> torch.Tensor:
         if code_inputs is not None:
-            outputs = self.encoder(code_inputs, attention_mask=code_inputs.ne(1))[0]
-            return self._compute_avg_pooling(outputs, code_inputs.ne(1))
+            outputs = self.encoder(code_inputs, attention_mask=attention_mask)[0]
+            return self._compute_avg_pooling(outputs, attention_mask)
         else:
-            outputs = self.encoder(nl_inputs, attention_mask=nl_inputs.ne(1))[0]
-            return self._compute_avg_pooling(outputs, nl_inputs.ne(1))
+            outputs = self.encoder(nl_inputs, attention_mask=attention_mask)[0]
+            return self._compute_avg_pooling(outputs, attention_mask)
 
 
 @register_model(HiddenStateMethod.CLS.value)
@@ -151,6 +154,25 @@ class BaseModel(nn.Module):
         self.encoder = encoder
         self.config = encoder.config
 
+    def forward(self,
+                code_inputs: Optional[torch.Tensor] = None,
+                nl_inputs: Optional[torch.Tensor] = None,
+                attention_mask: Optional[torch.Tensor] = None,
+                position_ids: Optional[torch.Tensor] = None) -> torch.Tensor:
+        if code_inputs is not None:
+            return self.encoder(code_inputs, attention_mask=attention_mask)[1]
+        else:
+            return self.encoder(nl_inputs, attention_mask=attention_mask)[1]
+
+
+@register_model(HiddenStateMethod.LAST.value)
+class LastModel(nn.Module):
+    """使用CLS标记输出的基础模型"""
+
+    def __init__(self, encoder: Any):
+        super().__init__()
+        self.encoder = encoder
+        self.config = encoder.config
 
     def forward(self,
                 code_inputs: Optional[torch.Tensor] = None,
@@ -158,9 +180,17 @@ class BaseModel(nn.Module):
                 attention_mask: Optional[torch.Tensor] = None,
                 position_ids: Optional[torch.Tensor] = None) -> torch.Tensor:
         if code_inputs is not None:
-            return self.encoder(code_inputs, attention_mask=code_inputs.ne(1))[1]
+            last_hidden_states = self.encoder(code_inputs, attention_mask=attention_mask)[0]
         else:
-            return self.encoder(nl_inputs, attention_mask=nl_inputs.ne(1))[1]
+            last_hidden_states = self.encoder(nl_inputs, attention_mask=attention_mask)[0]
+
+        left_padding = (attention_mask[:, -1].sum() == attention_mask.shape[0])
+        if left_padding:
+            return last_hidden_states[:, -1]
+        else:
+            sequence_lengths = attention_mask.sum(dim=1) - 1
+            batch_size = last_hidden_states.shape[0]
+            return last_hidden_states[torch.arange(batch_size, device=last_hidden_states.device), sequence_lengths]
 
 
 class AllModel(nn.Module):
@@ -179,9 +209,9 @@ class AllModel(nn.Module):
                 attention_mask: Optional[torch.Tensor] = None,
                 position_ids: Optional[torch.Tensor] = None) -> torch.Tensor:
         outputs = self.model(code_inputs, nl_inputs, attention_mask, position_ids)
-        if self.hidden_state_method == HiddenStateMethod.AVG.value:
-            return normalize_output(outputs)
-        return outputs
+        # if self.hidden_state_method == HiddenStateMethod.AVG.value:
+        return normalize_output(outputs)
+        # return outputs
 
     def save_pretrained(self, path: str) -> None:
         """保存预训练模型"""

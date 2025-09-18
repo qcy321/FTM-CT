@@ -85,6 +85,27 @@ class FeatureConverterBase(FeatureConverter):
         return InputFeatures(nl_ids, code_ids, js['url'] if "url" in js else js["retrieval_idx"])
 
 
+@FeatureConverterRegistry.register(ModelClass.QWEN.value)
+class FeatureConverterQwen(FeatureConverter):
+    def convert_examples_to_features(self, item):
+        js, tokenizer, args = item
+        # code = remove_comments_and_docstrings(js["original_string"])
+        code = ' '.join(js['code_tokens']) if type(js['code_tokens']) is list else ' '.join(js['code_tokens'].split())
+        code_tokens = tokenizer.tokenize(code)[:args.code_length]
+        code_ids = tokenizer.convert_tokens_to_ids(code_tokens)
+        padding_length = args.code_length - len(code_tokens)
+        code_ids += [tokenizer.pad_token_id] * padding_length
+
+        # nl
+        nl = ' '.join(js['docstring_tokens']) if type(js['docstring_tokens']) is list else ' '.join(js['doc'].split())
+        nl_tokens = tokenizer.tokenize(nl)[:args.nl_length]
+        nl_ids = tokenizer.convert_tokens_to_ids(nl_tokens)
+        padding_length = args.nl_length - len(nl_ids)
+        nl_ids += [tokenizer.pad_token_id] * padding_length
+
+        return InputFeatures(nl_ids, code_ids, js['url'] if "url" in js else js["retrieval_idx"])
+
+
 @FeatureConverterRegistry.register(ModelClass.UNIX.value, ModelClass.SODA.value)
 class FeatureConverterUnix(FeatureConverter):
     def convert_examples_to_features(self, item):

@@ -8,7 +8,7 @@ from io import StringIO
 
 import pandas as pd
 
-from util import Log, run, FunctionInf, split_task, DfData
+from util import Log, run, FunctionInf, parse_func_code, split_task, DfData
 
 logger = logging.getLogger(__name__)
 
@@ -78,10 +78,10 @@ def mult_data_processing(args, df_data: DfData, chunk_size: int = 500):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--num_processes", type=int, default=1,
+    parser.add_argument("--num_processes", type=int, default=16,
                         help='执行的进程个数')
     parser.add_argument("--dataset", default="CosQA", type=str,
-                        help='Choose one from AdvTest、CosQA、SODS、CoNaLa、StaQC')
+                        help='Choose one from AdvTest、CosQA')
 
     args = parser.parse_args()
     args.data_dir = {
@@ -95,19 +95,21 @@ def main():
     }
     for file in files[args.dataset]:
         if not os.path.exists(args.data_dir[args.dataset] + "/" + file):
-            raise f"{args.data_dir[args.dataset]}/{file}，不存在"
-    for file in files[args.dataset]:
+            logger.warning(f"{args.data_dir[args.dataset]}/{file}，不存在")
+            continue
         if "code_idx_map" in file:
             new_df = pd.DataFrame(
                 columns=["idx", "doc", "code", "code_tokens", "docstring_tokens", "label", "retrieval_idx"])
             with open(args.data_dir[args.dataset] + "/" + file) as f:
                 js = json.load(f)
                 for key in js:
-                    le = new_df.shape[0]
-                    new_df.loc[le] = {"idx": "", "doc": "", "code": key,
-                                      "code_tokens": remove_comments_and_docstrings(key).split(),
-                                      "docstring_tokens": "", "label": "",
-                                      "retrieval_idx": js[key]}
+                    pa = parse_func_code(key)
+                    if pa is not None:
+                        le = new_df.shape[0]
+                        new_df.loc[le] = {"idx": "", "doc": "", "code": pa.source_code,
+                                          "code_tokens": remove_comments_and_docstrings(pa.source_code).split(),
+                                          "docstring_tokens": "", "label": "",
+                                          "retrieval_idx": js[key]}
             mult_data_processing(args, DfData(new_df, os.path.splitext(os.path.basename(file))[0] + ".json"))
         else:
             mult_data_processing(args, DfData(

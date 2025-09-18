@@ -45,6 +45,7 @@ class ModelClass(Enum):
     BART = "Bart"
     SODA = "soda"
     GRAPH = "graph"
+    QWEN = "qwen"
 
 
 class SaveModelFileName(Enum):
@@ -59,7 +60,9 @@ MODEL_CLASS_MAPPING = {
     "Salesforce/codet5-base": ModelClass.T5.value,
     "uclanlp/plbart-base": ModelClass.BART.value,
     "microsoft/graphcodebert-base": ModelClass.GRAPH.value,
-    "DeepSoftwareAnalytics/CoCoSoDa": ModelClass.UNIX.value
+    "DeepSoftwareAnalytics/CoCoSoDa": ModelClass.UNIX.value,
+    "BAAI/bge-code-v1": ModelClass.QWEN.value,
+    "Qwen/Qwen3-Embedding-0.6B": ModelClass.QWEN.value
 }
 
 

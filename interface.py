@@ -14,6 +14,9 @@ class Strategy:
         self.manager = manager
         self.cache = cache
 
+    def set_interval(self, epoch):
+        raise NotImplementedError("Subclasses must implement the set_interval method")
+
     def execute(self, args, epoch, model, code_inputs, mask, ids):
         """Execute the strategy for processing code inputs and masks.
 
@@ -38,6 +41,14 @@ class Strategy:
 
 
 class FeatureConverter:
+
+    def convert_all(self, items):
+        datas, tokenizer, args = items
+        result = []
+        for js in datas:
+            out = self.convert_examples_to_features((js, tokenizer, args))
+            result.append(out)
+        return result
 
     def convert_examples_to_features(self, item):
         """Convert examples to features.

@@ -6,6 +6,8 @@
     @Date    ：2025/4/15 18:13
     @Description :
 '''
+import math
+
 from interface import Strategy
 from common import FinetuneStrategy
 
@@ -34,9 +36,12 @@ class StrategyRegistry:
 # 具体策略实现（使用注册器自动注入）
 @StrategyRegistry.register(FinetuneStrategy.CROSS.value)
 class CrossStrategy(Strategy):
+    def set_interval(self, epoch):
+        self.manager.interval = 2
+
     def execute(self, args, epoch, model, code_inputs, mask, ids):
         # interval 2 epoch 10
-        if (epoch + 1) % args.interval != 0:
+        if (epoch + 1) % self.manager.interval != 0:
             if self.manager.in_strategy:
                 self.manager.reset()
             k = self.manager.forward(model, code_inputs, mask, ids)
@@ -53,11 +58,16 @@ class CrossStrategy(Strategy):
 
 @StrategyRegistry.register(FinetuneStrategy.INCREASE.value)
 class IncreaseStrategy(Strategy):
+
+    def set_interval(self, epoch):
+        self.manager.interval = 2
+        self.manager.count = self.manager.interval
+
     def execute(self, args, epoch, model, code_inputs, mask, ids):
         # interval 2 epoch 9
         if epoch != self.manager.epoch and self.manager.in_strategy:
             self.manager.count += self.manager.interval
-        if (epoch + 1) % (args.interval + self.manager.count) != 0:
+        if (epoch + 1) % self.manager.count != 0:
             if self.manager.in_strategy:
                 self.manager.reset()
             k = self.manager.forward(model, code_inputs, mask, ids)
@@ -76,11 +86,16 @@ class IncreaseStrategy(Strategy):
 
 @StrategyRegistry.register(FinetuneStrategy.DECREASE.value)
 class DecreaseStrategy(Strategy):
+
+    def set_interval(self, epoch):
+        self.manager.interval = math.floor((math.sqrt(8 * epoch + 9) - 1) / 2)
+        self.manager.count = self.manager.interval
+
     def execute(self, args, epoch, model, code_inputs, mask, ids):
         # interval 4 epoch 9
         if epoch != self.manager.epoch and self.manager.in_strategy:
             self.manager.count += self.manager.interval
-        if (epoch + 1) % (args.interval + self.manager.count) != 0:
+        if (epoch + 1) % self.manager.count != 0:
             if self.manager.in_strategy:
                 self.manager.reset()
             k = self.manager.forward(model, code_inputs, mask, ids)
@@ -99,6 +114,10 @@ class DecreaseStrategy(Strategy):
 
 @StrategyRegistry.register(FinetuneStrategy.DIVIDE.value)
 class DivideStrategy(Strategy):
+
+    def set_interval(self, epoch):
+        self.manager.interval = math.ceil(epoch * 0.5)
+
     def execute(self, args, epoch, model, code_inputs, mask, ids):
         # interval 5 epoch 10
         if epoch < self.manager.interval:
@@ -119,5 +138,9 @@ class DivideStrategy(Strategy):
 
 @StrategyRegistry.register(FinetuneStrategy.NONE.value)
 class NoneStrategy(Strategy):
+
+    def set_interval(self, epoch):
+        self.manager.interval = 0
+
     def execute(self, args, epoch, model, code_inputs, mask, ids):
         return self.manager.forward(model, code_inputs, mask, ids)

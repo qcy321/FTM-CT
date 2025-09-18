@@ -9,6 +9,7 @@
 import json
 import logging
 import os
+import time
 from typing import Optional
 
 import torch
@@ -44,19 +45,19 @@ def setup_optimizer_scheduler(args, model, num_training_steps: int):
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=num_training_steps)
 
     # 加载保存的优化器和调度器状态
-    last_path = os.path.join(args.output_dir, CheckpointType.LAST_MRR.value)
+    last_path = os.path.join(args.output_dir, args.model_name, CheckpointType.LAST_MRR.value)
     try:
         if os.path.exists(os.path.join(last_path, 'optimizer.pt')):
-            optimizer.load_state_dict(torch.load(os.path.join(last_path, 'optimizer.pt')))
+            optimizer.load_state_dict(torch.load(os.path.join(last_path, 'optimizer.pt', weights_only=False)))
         if os.path.exists(os.path.join(last_path, 'scheduler.pt')):
-            scheduler.load_state_dict(torch.load(os.path.join(last_path, 'scheduler.pt')))
+            scheduler.load_state_dict(torch.load(os.path.join(last_path, 'scheduler.pt', weights_only=False)))
     except Exception as e:
         logger.warning(f"Failed to load the optimizer or scheduler: {e}")
 
     return optimizer, scheduler
 
 
-def train_epoch(args, model, train_dataloader, optimizer, scheduler, scaler,
+def train_epoch(args, model, tokenizer, train_dataloader, optimizer, scheduler, scaler,
                 epoch_idx: int, cur_epoch=None, dup=None) -> Optional[int]:
     """训练模型一个 epoch。"""
     model.train()
@@ -64,12 +65,14 @@ def train_epoch(args, model, train_dataloader, optimizer, scheduler, scaler,
     for step, batch in enumerate(train_dataloader):
         nl_inputs = batch[0].to(args.device)
         code_inputs = batch[1].to(args.device)
-        mask = batch[2].to(args.device) if args.model_class == ModelClass.GRAPH.value else None
+        nl_mask = batch[2].to(args.device) if args.model_class == ModelClass.GRAPH.value else nl_inputs.ne(
+            tokenizer.pad_token_id)
+        code_mask = code_inputs.ne(tokenizer.pad_token_id)
         ids = batch[3].to(args.device) if args.model_class == ModelClass.GRAPH.value else None
 
         with autocast(enabled=args.fp16):
-            q = model(nl_inputs=nl_inputs, attention_mask=mask, position_ids=ids)
-            k = args.strategy.execute(args, epoch_idx, model, code_inputs, mask, ids)
+            q = model(nl_inputs=nl_inputs, attention_mask=nl_mask, position_ids=ids)
+            k = args.strategy.execute(args, epoch_idx, model, code_inputs, code_mask, ids)
             loss = contrastive_loss(q, k, args,
                                     args.temperature if args.hidden_state_method == "avg" else 1)
 
@@ -106,7 +109,7 @@ def train_epoch(args, model, train_dataloader, optimizer, scheduler, scaler,
                 raise TrainingComplete()  # 抛出异常跳出
 
 
-def pre_training(args, model, tokenizer, pool):
+def pre_training(args, model, tokenizer):
     """ Train the model """
 
     # get optimizer and scheduler
@@ -140,7 +143,7 @@ def pre_training(args, model, tokenizer, pool):
                 cur_lang = args.all_lang[index]
                 args.output_dir = os.path.join(args.root_output_dir, cur_lang)
 
-                train_dataset = TextDataset(tokenizer, args, args.train_data_file, pool)
+                train_dataset = TextDataset(tokenizer, args, args.train_data_file)
                 train_dataloader = DataLoader(train_dataset, sampler=RandomSampler(train_dataset),
                                               batch_size=args.train_batch_size * max(1, args.n_gpu), num_workers=4)
                 if start_idx == 0:
@@ -152,26 +155,17 @@ def pre_training(args, model, tokenizer, pool):
                 logger.info("  per optimization steps = %d", len(train_dataloader))
                 logger.info("  Cur lang total optimization steps = %d", len(train_dataloader) * args.num_train_epochs)
                 for epoch in range(start_idx, args.num_train_epochs):
-                    train_epoch(args, model, train_dataloader, optimizer,
+                    train_epoch(args, model, tokenizer, train_dataloader, optimizer,
                                 scheduler, scaler, idx, epoch, dup)
 
                     save_last_model(args, model, optimizer, scheduler, idx, args.root_output_dir)
                     # evaluate
-                    results = evaluate(args, model, tokenizer, args.eval_data_file, pool)
+                    results = evaluate(args, model, tokenizer, args.eval_data_file)
                     logger.info("Evaluation results:")
                     for key, value in results.items():
                         logger.info("  %s = %s", key, value)
                     with open(args.mrr_result, "a") as f:
                         f.write(json.dumps(results) + "\n")
-
-                    # evaluate test
-                    results_test = evaluate(args, model, tokenizer, args.test_data_file, pool)
-                    logger.info("Test results:")
-                    for key, value in results_test.items():
-                        logger.info("  %s = %s", key, value)
-                    with open(args.mrr_result, "a") as f:
-                        f.write(json.dumps(results) + "\n")
-                        f.write(f"* *{idx}* *" + "\n")
 
                     # save best model
                     output_dir, best_mrr[index] = save_best_model(args, results['eval_mrr'], best_mrr[index], model,
@@ -185,7 +179,7 @@ def pre_training(args, model, tokenizer, pool):
                 start_idx = 0
 
             if args.global_step < args.max_steps:
-                per_dir = os.path.join(args.root_output_dir, CheckpointType.PER.value, str(dup))
+                per_dir = os.path.join(args.root_output_dir, args.model_name, CheckpointType.PER.value, str(dup))
                 save_model(model, per_dir, True)
                 logger.info(f"Save the {dup}-th round model checkpoint to {per_dir}")
                 dup += 1
@@ -194,15 +188,15 @@ def pre_training(args, model, tokenizer, pool):
     except TrainingComplete:
         pass  # 跳到最终保存
 
-    final_dir = os.path.join(args.root_output_dir, CheckpointType.FINAL.value)
+    final_dir = os.path.join(args.root_output_dir, args.model_name, CheckpointType.FINAL.value)
     save_model(model, final_dir, True)
     logger.info("Saving model final checkpoint to %s", final_dir)
 
 
-def fine_tuning(args, model, tokenizer, pool):
+def fine_tuning(args, model, tokenizer):
     """ Train the model """
     # get training dataset
-    train_dataset = TextDataset(tokenizer, args, args.train_data_file, pool)
+    train_dataset = TextDataset(tokenizer, args, args.train_data_file)
     train_sampler = RandomSampler(train_dataset)
     train_dataloader = DataLoader(train_dataset, sampler=train_sampler,
                                   batch_size=args.train_batch_size * max(1, args.n_gpu), num_workers=4)
@@ -230,24 +224,16 @@ def fine_tuning(args, model, tokenizer, pool):
 
     best_mrr = args.best_mrr
     for idx in range(args.start_idx, args.num_train_epochs):
-        train_epoch(args, model, train_dataloader, optimizer, scheduler, scaler, idx)
+        train_epoch(args, model, tokenizer, train_dataloader, optimizer, scheduler, scaler, idx)
         save_last_model(args, model, optimizer, scheduler, idx)
 
         # evaluate
-        results = evaluate(args, model, tokenizer, args.eval_data_file, pool)
+        results = evaluate(args, model, tokenizer, args.eval_data_file)
         logger.info("Evaluation results:")
         for key, value in results.items():
             logger.info("  %s = %s", key, value)
         with open(args.mrr_result, "a") as f:
             f.write(json.dumps(results) + "\n")
-
-        # evaluate test
-        results_test = evaluate(args, model, tokenizer, args.test_data_file, pool)
-        logger.info("Test Results:")
-        for key, value in results_test.items():
-            logger.info("  %s = %s", key, value)
-        with open(args.mrr_result, "a") as f:
-            f.write("**TEST**:" + json.dumps(results_test) + "\n")
 
         # save best model
         output_dir, best_mrr = save_best_model(args, results['eval_mrr'], best_mrr, model, results)
@@ -256,14 +242,85 @@ def fine_tuning(args, model, tokenizer, pool):
             logger.info(f"Saving {best_mrr} checkpoint to {output_dir}/best.pt")
 
 
-def evaluate(args, model, tokenizer, data_file, pool):
+def runtime(args, model, tokenizer):
+    """ Train the model """
+    # get training dataset
+    train_dataset = TextDataset(tokenizer, args, args.train_data_file)
+    train_sampler = RandomSampler(train_dataset)
+    train_dataloader = DataLoader(train_dataset, sampler=train_sampler,
+                                  batch_size=args.train_batch_size * max(1, args.n_gpu), num_workers=0)
+
+    num_training_steps = len(train_dataloader) * args.num_train_epochs
+
+    optimizer, scheduler = setup_optimizer_scheduler(args, model, num_training_steps)
+    # 初始化 GradScaler 用于 FP16
+    scaler = GradScaler(enabled=args.fp16)  # enabled=args.fp16 确保 FP16 只在需要时生效
+
+    if args.n_gpu > 1:
+        model = torch.nn.DataParallel(model, device_ids=args.device_ids)
+
+    # Train!
+    logger.info("***** Running training *****")
+    logger.info("  Num examples = %d", len(train_dataset))
+    logger.info("  Num Epochs = %d", args.num_train_epochs)
+    logger.info("  Instantaneous batch size per GPU = %d", args.train_batch_size)
+    logger.info("  Total train batch size  = %d", args.train_batch_size * max(1, args.n_gpu))
+    logger.info("  per optimization steps = %d", len(train_dataloader))
+    logger.info("  Total optimization steps = %d", num_training_steps)
+
+    model.zero_grad()
+    result_time_In = []
+    result_time_Non = []
+    for idx in range(args.start_idx, args.num_train_epochs):
+        model.train()
+        for step, batch in enumerate(train_dataloader):
+            nl_inputs = batch[0].to(args.device)
+            code_inputs = batch[1].to(args.device)
+            nl_mask = batch[2].to(args.device) if args.model_class == ModelClass.GRAPH.value else nl_inputs.ne(
+                tokenizer.pad_token_id)
+            code_mask = code_inputs.ne(tokenizer.pad_token_id)
+            ids = batch[3].to(args.device) if args.model_class == ModelClass.GRAPH.value else None
+
+            start_time = time.time()
+
+            with autocast(device_type='cuda', enabled=args.fp16):
+                q = model(nl_inputs=nl_inputs, attention_mask=nl_mask, position_ids=ids)
+                k = args.strategy.execute(args, idx, model, code_inputs, code_mask, ids)
+                loss = contrastive_loss(q, k, args,
+                                        args.temperature if args.hidden_state_method == "avg" else 1)
+
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+            scaler.step(optimizer)
+            scaler.update()
+            optimizer.zero_grad()
+            scheduler.step()
+
+            end_time = time.time()
+            execution_time = end_time - start_time
+            if args.strategy.manager.in_strategy:
+                result_time_In.append(execution_time)
+            else:
+                result_time_Non.append(execution_time)
+
+            if (step + 1) % args.log_interval == 0:
+                logger.info(
+                    f"epoch {idx} Policy {'In-Policy' if args.strategy.manager.in_strategy else 'Non-Policy'} step {step + 1} time {round(execution_time, 6)}")
+
+        save_last_model(args, model, optimizer, scheduler, idx)
+    logger.info(f"In-Policy Avg time {round(sum(result_time_In) / len(result_time_In), 6)}")
+    logger.info(f"Non-Policy Avg time {round(sum(result_time_Non) / len(result_time_Non), 6)}")
+
+
+def evaluate(args, model, tokenizer, data_file):
     """Evaluate model performance and return MRR and Top-K accuracy."""
-    nl_dataset = TextDataset(tokenizer, args, data_file, pool)
+    nl_dataset = TextDataset(tokenizer, args, data_file)
     # 由于这里的评估跟数据的顺序有关，不能使用DistributedSampler，来进行分配数据
     nl_dataloader = DataLoader(nl_dataset, sampler=SequentialSampler(nl_dataset),
                                batch_size=args.eval_batch_size * max(1, args.n_gpu), num_workers=4)
 
-    code_dataset = nl_dataset if args.dataset == "AdvTest" else TextDataset(tokenizer, args, args.codebase_file, pool)
+    code_dataset = nl_dataset if args.dataset == "AdvTest" else TextDataset(tokenizer, args, args.codebase_file)
     code_dataloader = DataLoader(code_dataset, sampler=SequentialSampler(code_dataset),
                                  batch_size=args.eval_batch_size * max(1, args.n_gpu), num_workers=4)
 
@@ -282,14 +339,16 @@ def evaluate(args, model, tokenizer, data_file, pool):
     with torch.no_grad():
         for batch in nl_dataloader:
             nl_inputs = batch[0].to(args.device)
-            mask = batch[2].to(args.device) if args.model_class == ModelClass.GRAPH.value else None
+            mask = batch[2].to(args.device) if args.model_class == ModelClass.GRAPH.value else nl_inputs.ne(
+                tokenizer.pad_token_id)
             ids = batch[3].to(args.device) if args.model_class == ModelClass.GRAPH.value else None
             nl_vec = model(nl_inputs=nl_inputs, attention_mask=mask, position_ids=ids)
             nl_vecs.append(nl_vec.cpu().numpy())
 
         for batch in code_dataloader:
             code_inputs = batch[1].to(args.device)
-            mask = batch[2].to(args.device) if args.model_class == ModelClass.GRAPH.value else None
+            mask = batch[2].to(args.device) if args.model_class == ModelClass.GRAPH.value else code_inputs.ne(
+                tokenizer.pad_token_id)
             ids = batch[3].to(args.device) if args.model_class == ModelClass.GRAPH.value else None
             code_vec = model(code_inputs=code_inputs, attention_mask=mask, position_ids=ids)
             code_vecs.append(code_vec.cpu().numpy())
@@ -346,10 +405,10 @@ def save_best_model(args, cur_mrr, best_mrr, model, results):
         logger.info("  " + "*" * 20)
         logger.info("  Best mrr:%s", best_mrr)
         logger.info("  " + "*" * 20)
-        output_dir = os.path.join(args.output_dir, CheckpointType.BEST_MRR.value)
+        output_dir = os.path.join(args.output_dir, args.model_name, CheckpointType.BEST_MRR.value)
         save_model(model, output_dir)
         logger.info("Saving model checkpoint to %s", output_dir)
-    return os.path.join(args.root_output_dir, "parameter"), best_mrr
+    return os.path.join(args.root_output_dir, args.model_name, "parameter"), best_mrr
 
 
 def save_parameter(args, output_dir, idx):
@@ -366,10 +425,10 @@ def save_parameter(args, output_dir, idx):
 
 def save_last_model(args, model, optimizer, scheduler, idx, root_output_dir=None):
     tmp_output_dir = args.output_dir if root_output_dir is None else root_output_dir
-    output_dir = os.path.join(tmp_output_dir,
+    output_dir = os.path.join(tmp_output_dir, args.model_name,
                               CheckpointType.LAST_MRR.value)
     save_model(model, output_dir)
-    save_parameter(args, os.path.join(tmp_output_dir, "parameter"), idx)
+    save_parameter(args, os.path.join(tmp_output_dir, args.model_name, "parameter"), idx)
     logger.info("Saving model checkpoint to %s", output_dir)
     try:
         torch.save(optimizer.state_dict(), os.path.join(output_dir, "optimizer.pt"))

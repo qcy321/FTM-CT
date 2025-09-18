@@ -20,20 +20,17 @@ from typing import Any, Dict
 from strategy import StrategyRegistry
 from pre_model import select_model
 from utils import set_seed, KEncoderManager, CacheQueue
-from train import pre_training, fine_tuning, evaluate
-from common import ModelClass
+from train import pre_training, fine_tuning, evaluate, runtime
 
 from transformers import (AutoModel, AutoTokenizer, RobertaTokenizer, T5Model,
                           RobertaModel)
+from peft import LoraConfig, get_peft_model, TaskType
+
 # import transformers
 # 强制启用离线模式
 # transformers.utils.hub.HF_OFFLINE = True
 
-from multiprocessing import Pool
-
 logger = logging.getLogger(__name__)
-
-cpu_cont = 15
 
 
 class ModelManager:
@@ -50,13 +47,27 @@ class ModelManager:
         logger.info(f"Loading model from {self.model_name_or_path if checkpoint_path is None else checkpoint_path}")
         self.model = AutoModel.from_pretrained(self.model_name_or_path)
 
+        if self.model_class in ["QWEN"]:
+            # 配置 LoRA
+            lora_config = LoraConfig(
+                task_type=TaskType.FEATURE_EXTRACTION,  # 特征提取
+                r=16,  # 秩
+                lora_alpha=32,  # alpha 值
+                target_modules=["q_proj", "k_proj", "v_proj"],  # 微调的模块（根据模型调整）
+                lora_dropout=0.1,  # Dropout 比例
+            )
+
+            # 应用 LoRA 到模型
+            self.model = get_peft_model(self.model, lora_config)
+
         if self.model_class in ["T5"]:
             self.model = self.model.encoder
         self.model = select_model(self.model, args)  # 假设 select_model 是已定义的函数
 
         if checkpoint_path and os.path.exists(checkpoint_path):
             logger.info(f"Loading checkpoint from {checkpoint_path}")
-            self.model.load_state_dict(torch.load(checkpoint_path, map_location=self.device), strict=strict)
+            self.model.load_state_dict(torch.load(checkpoint_path, weights_only=False, map_location=self.device),
+                                       strict=strict)
         else:
             logger.warning(f"Checkpoint path {checkpoint_path} does not exist, using pretrained weights")
 
@@ -74,7 +85,7 @@ def setup_device_and_gpu(args):
 
 def load_training_state(args) -> None:
     """设置训练状态，包括断点续训信息和最佳 MRR"""
-    path = os.path.join(args.output_dir, "parameter")
+    path = os.path.join(args.output_dir, args.model_name, "parameter")
     idx_file = os.path.join(path, "idx.txt")
     best_file = os.path.join(path, "best.pt")
     global_step_file = os.path.join(path, "global_step.pt")
@@ -86,7 +97,7 @@ def load_training_state(args) -> None:
     args.global_step = 0
 
     if os.path.exists(global_step_file):
-        args.global_step = torch.load(global_step_file)
+        args.global_step = torch.load(global_step_file, weights_only=False)
         logger.info(f"Resuming training from {args.global_step} steps")
 
     if os.path.exists(idx_file):
@@ -97,22 +108,23 @@ def load_training_state(args) -> None:
         logger.info("Starting training from scratch")
 
     if os.path.exists(best_file):
-        args.best_mrr = torch.load(best_file)
+        args.best_mrr = torch.load(best_file, weights_only=False)
         logger.info(f"Best MRR from previous training: {args.best_mrr}")
     else:
         logger.info("No best MRR found, starting with 0.0")
 
 
-def evaluate_or_test(args, model_manager: ModelManager, tokenizer: Any, data_file: str, pool: Pool,
+def evaluate_or_test(args, model_manager: ModelManager, tokenizer: Any, data_file: str,
                      mode: str = "eval", checkpoint_type: CheckpointType = CheckpointType.LAST_MRR) -> Dict:
     """执行评估或测试"""
     if not args.do_zero_shot:
-        checkpoint_path = os.path.join(args.output_dir, checkpoint_type.value, SaveModelFileName.STATE_DIC.value)
+        checkpoint_path = os.path.join(args.output_dir, args.model_name, checkpoint_type.value,
+                                       SaveModelFileName.STATE_DIC.value)
         model_manager.load_model(checkpoint_path=checkpoint_path, strict=False)
     else:
         logger.info(f"***** zero shot eval *****")
 
-    result = evaluate(args, model_manager.model, tokenizer, data_file, pool)  # 假设 evaluate 是已定义的函数
+    result = evaluate(args, model_manager.model, tokenizer, data_file)  # 假设 evaluate 是已定义的函数
     logger.info(f"***** {mode.capitalize()} results ({checkpoint_type.value}) *****")
     for key in sorted(result.keys()):
         logger.info("  %s = %s", key, str(result[key]))
@@ -120,8 +132,6 @@ def evaluate_or_test(args, model_manager: ModelManager, tokenizer: Any, data_fil
 
 
 def main(args):
-    pool = Pool(cpu_cont)
-
     # 加载 tokenizer
     tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, local_files_only=True)
 
@@ -134,7 +144,7 @@ def main(args):
     logger.info("Training/evaluation parameters %s", args)
 
     if args.idx != 0:
-        checkpoint_path = os.path.join(args.output_dir, CheckpointType.LAST_MRR.value,
+        checkpoint_path = os.path.join(args.output_dir, args.model_name, CheckpointType.LAST_MRR.value,
                                        SaveModelFileName.STATE_DIC.value)
         if args.train_mode == "pretrain":
             args.start_idx = args.idx % args.num_train_epochs
@@ -148,35 +158,33 @@ def main(args):
         model_manager.load_model()  # 从预训练模型开始
 
     if args.do_zero_shot:
-        evaluate_or_test(args, model_manager, tokenizer, args.test_data_file, pool,
+        evaluate_or_test(args, model_manager, tokenizer, args.test_data_file,
                          mode="eval", checkpoint_type=CheckpointType.LAST_MRR)
         return 0
 
     # 训练
     if args.do_train:
         if args.train_mode == "finetune":
-            fine_tuning(args, model_manager.model, tokenizer, pool)  # 假设 train 是已定义的函数
+            fine_tuning(args, model_manager.model, tokenizer)  # 假设 train 是已定义的函数
+        elif args.train_mode == "pretrain":
+            pre_training(args, model_manager.model, tokenizer)
         else:
-            pre_training(args, model_manager.model, tokenizer, pool)
+            runtime(args, model_manager.model, tokenizer)
 
     # 评估
     results = {}
 
     if args.do_eval:
-        results.update(evaluate_or_test(args, model_manager, tokenizer, args.eval_data_file, pool,
+        results.update(evaluate_or_test(args, model_manager, tokenizer, args.eval_data_file,
                                         mode="eval", checkpoint_type=CheckpointType.LAST_MRR))
 
     # 测试（使用最佳模型）
     if args.do_test:
-        results.update(evaluate_or_test(args, model_manager, tokenizer, args.test_data_file, pool,
+        results.update(evaluate_or_test(args, model_manager, tokenizer, args.test_data_file,
                                         mode="test", checkpoint_type=CheckpointType.BEST_MRR))
         # 测试（使用最后一个检查点）
-        results.update(evaluate_or_test(args, model_manager, tokenizer, args.test_data_file, pool,
+        results.update(evaluate_or_test(args, model_manager, tokenizer, args.test_data_file,
                                         mode="test", checkpoint_type=CheckpointType.LAST_MRR))
-
-    # 关闭进程池
-    pool.close()
-    pool.join()
 
     rmm_files(args)
 
@@ -209,7 +217,7 @@ def rmm_files(args) -> None:
         print(f"Please check the output log at: {args.log}")
     else:
         logger.info("Training is complete, delete the intermediate generated files.")
-        folder_path = os.path.join(args.root_output_dir, "parameter")
+        folder_path = os.path.join(args.root_output_dir, args.model_name, "parameter")
         try:
             shutil.rmtree(folder_path)
             print(f"Successfully deleted folder: {folder_path}")
@@ -317,22 +325,19 @@ def setup_data_paths(args) -> None:
 
 def setup_strategy(args):
     # 初始化 KEncoderManager
-    strategy = os.path.join(args.output_dir, "parameter", "strategy.pt")
+    strategy = os.path.join(args.output_dir, args.model_name, "parameter", "strategy.pt")
     if os.path.exists(strategy):
-        args.strategy = torch.load(strategy)
+        args.strategy = torch.load(strategy, weights_only=False)
         logger.info("Loading strategy from %s", strategy)
     else:
         k_manager = KEncoderManager()
-        k_manager.interval = getattr(args, "interval", 2)
-        if args.interval < 2:
-            raise ValueError("间隔值不能小于2")
-
         queue = CacheQueue(args.queue_size, args.device, args.fp16)
 
         # 自动注入策略
         strategy_name = getattr(args, "finetune_strategy", FinetuneStrategy.NONE.value)
         logger.info(f"Finetune strategy: {strategy_name}")
         args.strategy = StrategyRegistry.get_strategy(strategy_name, k_manager, queue)
+        args.strategy.set_interval(args.num_train_epochs)
 
 
 def setup_model_class(args):
@@ -399,18 +404,18 @@ if __name__ == "__main__":
 
     parser.add_argument("--model_name_or_path", default="DeepSoftwareAnalytics/CoCoSoDa", type=str,
                         help="Model checkpoint path or name for weight initialization.")  # microsoft/codebert-base
+    parser.add_argument("--model_name", default="CoCoSoDa", type=str,
+                        help="Model name.")
 
     parser.add_argument("--hidden_state_method", default="avg", type=str,
                         help="Method to calculate the hidden state, e.g., cls, avg.")
     parser.add_argument("--train_mode", default="finetune", type=str,
-                        help="Training mode, choose from finetune or pretrain.")
+                        help="Training mode, choose from finetune, pretrain or runtime.")
 
     parser.add_argument("--finetune_strategy", default="cross", type=str,
                         help="Finetuning strategy, choose from cross, increase, decrease, none or divide.")
     parser.add_argument("--finetune_checkpoint", default="best", type=str,
                         help="Checkpoint to use for finetuning, choose from best or last.")
-    parser.add_argument('--interval', type=int, default=2,
-                        help="Interval for finetune_strategy (>= 2), used in cross, increase, decrease, or divide finetuning strategies.")
 
     parser.add_argument("--nl_length", default=128, type=int,
                         help="Maximum sequence length for natural language input after tokenization.")
@@ -436,6 +441,8 @@ if __name__ == "__main__":
                         help="Code Testing.")
     parser.add_argument('--test_data_size', type=int, default=10,
                         help="Size of test data to use for training.")
+    parser.add_argument('--cpu_core', type=int, default=16,
+                        help="cpu core number.")
 
     parser.add_argument("--fp16", action='store_true',
                         help="Whether to use 16-bit floating-point precision for training.")

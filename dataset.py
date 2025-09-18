@@ -14,19 +14,24 @@ from tqdm import tqdm
 from torch.utils.data import Dataset
 
 from converter import FeatureConverterRegistry, FeatureConverter
-
+from util import run, FunctionInf, split_task
 
 def get_cache_file_path(args, prefix):
     if args.model_class != "base":
         cache_file = f"{args.output_dir}/{args.model_class}_{prefix}_{args.dataset}"
     else:
         cache_file = args.output_dir + '/' + prefix + '_' + args.dataset
-    suffix = '.pt'
-    return cache_file + "_codetest_" + str(args.test_data_size) + suffix if args.code_testing else cache_file + suffix
+    suffix = ""
+    if args.code_testing:
+        suffix += "_codetest_" + str(args.test_data_size)
+    if args.train_mode == "runtime":
+        suffix += "_runtime"
+    suffix += '.pt'
+    return cache_file + suffix
 
 
 class TextDataset(Dataset):
-    def __init__(self, tokenizer, args, file_path=None, pool=None):
+    def __init__(self, tokenizer, args, file_path=None):
         self.args = args
         prefix = os.path.splitext(os.path.basename(file_path))[0]
         if not os.path.exists(args.output_dir):
@@ -35,7 +40,7 @@ class TextDataset(Dataset):
         if not os.path.exists(cache_file):
             self.examples = []
             data = []
-            if args.code_testing:
+            if args.code_testing or args.train_mode == "runtime":
                 df = pd.read_json(file_path, lines=True if file_path.endswith(".jsonl") else False).head(
                     args.test_data_size)
             else:
@@ -45,8 +50,14 @@ class TextDataset(Dataset):
             for i in range(df.shape[0]):
                 # if not df.loc[i]["opcode_string"].strip() == "":
                 data.append((df.loc[i], tokenizer, args))
+            tasks: list[FunctionInf] = []
+            data_list: list = split_task(data, 500)
             converter: FeatureConverter = FeatureConverterRegistry.get_converter(args.model_class)
-            self.examples = pool.map(converter.convert_examples_to_features, tqdm(data, total=len(data)))
+            for da in data_list:
+                tasks.append(FunctionInf(converter.convert_all, ((da, tokenizer, args),)))
+            new_list: list = run(args.cpu_core, tasks, prefix)
+            for li in new_list:
+                self.examples.extend(li)
             args.strategy = strategy
             torch.save(self.examples, cache_file)
         if os.path.exists(cache_file):
