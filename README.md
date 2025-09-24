@@ -1,15 +1,15 @@
-# CTM: A Cross-Training Method for Code Search 🚀
+# FTM-CT: A Fine-Tuning Method with Cross-Training Policy for Code Search 🚀
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.9.13](https://img.shields.io/badge/python-3.9.13-blue.svg)](https://www.python.org/downloads/release/python-3913/)
 
-This repository contains the official implementation for the paper **"CTM: A Simple Contrastive Training Method for Code Search".
+This repository contains the official implementation for the paper **"FTM-CT: A Fine-Tuning Method with Cross-Training Policy for Code Search".
 
-CTM is a novel fine-tuning strategy that enhances code search models by optimizing the contrastive learning process. It introduces an alternating training mechanism that uses a cache of historical negative samples encoded by a fixed, best-performing checkpoint. This approach provides more diverse and challenging negative signals, boosting the model's semantic discrimination ability while simultaneously reducing training costs.
+FTM-CT is a novel fine-tuning strategy that enhances code search models by optimizing the contrastive learning process. It introduces an alternating training mechanism that uses a cache of historical negative samples encoded by a fixed, best-performing checkpoint. This approach provides more diverse and challenging negative signals, boosting the model's semantic discrimination ability while simultaneously reducing training costs.
 
 ## ✨ Key Features
 
-* **📈 Enhanced Performance**: CTM consistently improves the retrieval performance of various baseline models on code search tasks.
+* **📈 Enhanced Performance**: FTM-CT consistently improves the retrieval performance of various baseline models on code search tasks.
 * **💸 Cost-Efficient**: By using a fixed encoder that doesn't require backpropagation, the `In-Policy` training stage significantly reduces computational overhead and training time.
 
 ## 🏁 Getting Started
@@ -19,8 +19,8 @@ Follow these steps to set up the project environment and run the experiments.
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/qcy321/CTM.git
-cd CTM
+git clone https://github.com/qcy321/FTM-CT.git
+cd FTM-CT
 ```
 
 ### 2. Create Environment & Install Dependencies
@@ -29,8 +29,8 @@ It's recommended to use a virtual environment (like conda or venv).
 
 ```bash
 # Create and activate a conda environment
-conda create -n ctm python=3.9.13
-conda activate ctm
+conda create -n py39 python=3.9.13
+conda activate py39
 
 # Install required packages
 conda install --file requirements.txt
